@@ -1,5 +1,12 @@
 /** @jsx svg */
-import { Point, SNode as SNodeSchema, angleOfPoint, toDegrees } from "sprotty-protocol";
+import {
+    Point,
+    SNode as SNodeSchema,
+    SModelElement as SModelElementSchema,
+    angleOfPoint,
+    toDegrees,
+    ApplyLabelEditAction,
+} from "sprotty-protocol";
 import {
     svg,
     IView,
@@ -8,23 +15,108 @@ import {
     PolylineEdgeViewWithGapsOnIntersections,
     SEdge,
     ELLIPTIC_ANCHOR_KIND,
-    editLabelFeature,
     IViewArgs,
     WithEditableLabel,
     isEditableLabel,
+    TYPES,
+    IModelFactory,
+    SModelFactory,
+    SModelElement,
+    SChildElement,
+    SParentElement,
+    withEditLabelFeature,
+    SLabel,
+    Command,
+    CommandExecutionContext,
+    CommandReturn,
 } from "sprotty";
-import { injectable } from "inversify";
+import { inject, injectable } from "inversify";
 import { VNode } from "snabbdom";
 import "./views.css";
+import { constructorInject } from "./utils";
+
+@injectable()
+export abstract class ExtensibleView implements IView {
+    @inject(TYPES.IModelFactory) protected modelFactory: IModelFactory = new SModelFactory();
+
+    abstract render(
+        model: Readonly<SModelElement>,
+        context: RenderingContext,
+        args?: {} | undefined,
+    ): VNode | undefined;
+
+    createSubElement(schema: SModelElementSchema, parent: SParentElement): SChildElement {
+        return this.modelFactory.createElement(schema, parent);
+    }
+}
+
+@injectable()
+export class CustomApplyEditLabelCommand extends Command {
+    static readonly KIND = ApplyLabelEditAction.KIND;
+    private oldText: string = "";
+    private newText: string = "";
+
+    constructor(@constructorInject(TYPES.Action) private action: ApplyLabelEditAction) {
+        super();
+    }
+
+    execute(context: CommandExecutionContext): CommandReturn {
+        console.log(this.action.labelId);
+        const index = context.root.index;
+        const label = index.getById(this.action.labelId);
+        if (label && "text" in label) {
+            console.log(label);
+            this.oldText = label.text as string;
+            label.text = this.action.text;
+            // @ts-ignore
+            label.parent.text = this.action.text;
+            this.newText = label.text as string;
+        }
+
+        return context.root;
+    }
+
+    undo(context: CommandExecutionContext): CommandReturn {
+        const index = context.root.index;
+        const label = index.getById(this.action.labelId);
+        if (label && "text" in label) {
+            label.text = this.oldText;
+            // @ts-ignore
+            label.parent.text = this.oldText;
+        }
+
+        return context.root;
+    }
+
+    redo(context: CommandExecutionContext): CommandReturn {
+        const index = context.root.index;
+        const label = index.getById(this.action.labelId);
+        if (label && "text" in label) {
+            // @ts-ignore
+            label.parent.text = this.newText;
+        }
+
+        return context.root;
+    }
+}
 
 export interface DFDNodeSchema extends SNodeSchema {
     text: string;
 }
 
-export class RectangularDFDNode extends SNode {
-    static readonly DEFAULT_FEATURES = [...SNode.DEFAULT_FEATURES, editLabelFeature];
+export class RectangularDFDNode extends SNode implements WithEditableLabel {
+    static readonly DEFAULT_FEATURES = [...SNode.DEFAULT_FEATURES, withEditLabelFeature];
 
     text: string = "";
+    label: SChildElement | undefined = new SLabel();
+
+    get editableLabel() {
+        if (this.label && isEditableLabel(this.label)) {
+            return this.label;
+        }
+
+        return undefined;
+    }
 }
 
 export class CircularDFDNode extends RectangularDFDNode {
@@ -34,16 +126,31 @@ export class CircularDFDNode extends RectangularDFDNode {
 }
 
 @injectable()
-export class StorageNodeView implements IView {
-    render(node: Readonly<RectangularDFDNode>, _context: RenderingContext): VNode {
+export class StorageNodeView extends ExtensibleView {
+    render(node: RectangularDFDNode, context: RenderingContext): VNode {
         const width = node.size.width;
         const height = node.size.height;
+        const labelSchema = {
+            type: "label",
+            text: node.text,
+            updateText(text: string) {
+                console.log("updateText", text);
+                node.text = text;
+                if (node.label && "text" in node.label) {
+                    node.label.text = text;
+                }
+            },
+            position: { x: width / 2, y: height / 2 + 5 },
+        } as any;
+        node.label = this.createSubElement(labelSchema, undefined as any);
+        node.add(node.label);
+        node.children = [];
+
         return (
             <g class-sprotty-node={true} class-storage={true}>
                 <line x1="0" y1="0" x2={width} y2="0" />
-                <text x={width / 2} y={height / 2 + 5}>
-                    {node.text}
-                </text>
+                {/* {context.renderElement(node.label)} */}
+                {context.renderElement(node.label)}
                 <line x1="0" y1={height} x2={width} y2={height} />
                 {/* This transparent rect exists only to make this element easily selectable.
                     Without this you would need click the text or exactly hit one of the lines.

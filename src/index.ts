@@ -9,6 +9,7 @@ import {
     DFDNodeSchema,
     RectangularDFDNode,
     CircularDFDNode,
+    CustomApplyEditLabelCommand,
 } from "./views";
 import { Container, ContainerModule } from "inversify";
 import { SEdge as SEdgeSchema, SGraph as SGraphSchema, SLabel as SLabelSchema } from "sprotty-protocol";
@@ -80,6 +81,7 @@ const dataFlowDiagramModule = new ContainerModule((bind, unbind, isBound, rebind
 
     // For some reason the CreateElementAction and Command exist but in no sprotty module is the command registered, so we need to do this here.
     configureCommand(context, CreateElementCommand);
+    configureCommand(context, CustomApplyEditLabelCommand);
 });
 
 // Load the above defined module with all the used modules from sprotty.
